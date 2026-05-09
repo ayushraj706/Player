@@ -1,0 +1,67 @@
+name: Build Namida Release APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_android:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0 
+
+      # Flutter install karna zaroori hai kyunki Namida Flutter me bana hai
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+
+      # Server par jagah khali karne ke liye (Namida heavy app hai)
+      - name: free disk space
+        continue-on-error: true
+        run: |
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo apt clean
+          docker rmi $(docker image ls -aq)
+
+      - name: Setup dependencies
+        run: |
+          flutter clean
+          flutter pub upgrade
+          git submodule update --init --remote --recursive
+
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: "17"
+
+      # NAYA STEP: Fake Keystore banayenge aur Flutter ko batayenge ki isko use kare
+      - name: Generate Fake Keystore & key.properties
+        run: |
+          mkdir -p ~/.android
+          # 1. Fake Key banayi
+          keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+          
+          # 2. Flutter ko ye fake key use karne ke liye properties file banayi
+          cat <<EOF > android/key.properties
+          storePassword=android
+          keyPassword=android
+          keyAlias=androiddebugkey
+          storeFile=/home/runner/.android/debug.keystore
+          EOF
+
+      # App ka Release APK (arm64 processors ke liye) Build karna
+      - name: Build APK
+        run: flutter build apk --release --target-platform android-arm64
+
+      # Artifact me APK upload karna taaki tum download kar sako
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: namida-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 20
